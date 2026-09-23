@@ -1,126 +1,124 @@
+import { useMemo, useState, useSyncExternalStore } from "react";
+import { store, type PersistState } from "./archive/store";
+import { buildDemoState } from "./archive/demo";
+import { buildQueueItems } from "./rules/queue";
+import { FILL_STATIONS } from "./rules/constants";
+import { fmtPct } from "./pages/ui";
+import { IntakePage, recordToForm } from "./pages/IntakePage";
+import { QueuePage } from "./pages/QueuePage";
+import { PendingPage } from "./pages/PendingPage";
+import { HistoryPage } from "./pages/HistoryPage";
+import type { IntakeRecord } from "./rules/types";
+import type { IntakeFormInput } from "./rules/intake";
 import "./styles.css";
 
-const project = {
-  "sourceNo": 5,
-  "id": "hxyfront-62010",
-  "port": 62010,
-  "title": "潜水气瓶充填记录",
-  "domain": "潜水气瓶充填",
-  "prompt": "我想做一个给潜水店使用的气瓶充填前端系统，工作人员可以记录气瓶编号、容积、检验有效期、残压、目标压力、氧含量、氦含量、充填方式和操作员。页面需要有待充填队列、混合气比例提示、气瓶检验过期提醒、充填完成签收和单个气瓶历史记录。",
-  "palette": [
-    "#075985",
-    "#0d9488",
-    "#f59e0b"
-  ],
-  "metrics": [
-    "待充填",
-    "过期提醒",
-    "平均氧含量",
-    "签收单"
-  ],
-  "filters": [
-    "空气",
-    "高氧",
-    "Trimix",
-    "待检验"
-  ],
-  "fields": [
-    "气瓶编号",
-    "容积",
-    "检验有效期",
-    "残压",
-    "目标压力",
-    "氧含量"
-  ],
-  "records": [
-    [
-      "TANK-204",
-      "12L铝瓶",
-      "残压55bar，目标200bar",
-      "空气充填"
-    ],
-    [
-      "TANK-219",
-      "11L钢瓶",
-      "EAN32",
-      "待客户签收"
-    ],
-    [
-      "TANK-231",
-      "双瓶组",
-      "检验期剩余12天",
-      "标记提醒"
-    ]
-  ]
-};
+type Tab = "intake" | "queue" | "pending" | "history";
+
+const TABS: { key: Tab; label: string }[] = [
+  { key: "intake", label: "收瓶登记" },
+  { key: "queue", label: "充填队列" },
+  { key: "pending", label: "待处理区" },
+  { key: "history", label: "单瓶履历" },
+];
 
 function App() {
+  const state = useSyncExternalStore<PersistState>(store.subscribe, store.getState);
+  const [tab, setTab] = useState<Tab>("intake");
+  const [prefill, setPrefill] = useState<{ form: IntakeFormInput; fromId: string } | null>(null);
+
+  const queueItems = useMemo(() => buildQueueItems(state.intakes), [state.intakes]);
+  const queued = queueItems.length;
+  const onStations = queueItems.filter((q) => q.inStation).length;
+  const pendingCount = state.intakes.filter((r) => r.status === "PENDING").length;
+  const expiredCount = state.intakes.filter(
+    (r) => r.status === "PENDING" && r.reasons.some((x) => x.startsWith("检验有效期已过"))
+  ).length;
+  const avgO2 = queued
+    ? queueItems.reduce((s, q) => s + q.targetO2, 0) / queued
+    : 0;
+
+  const reedit = (r: IntakeRecord) => {
+    setPrefill({ form: recordToForm(r), fromId: r.id });
+    setTab("intake");
+  };
+
   return (
     <main className="app">
-      <section className="hero">
-        <p>{project.id} · 源提示词{project.sourceNo} · Port {project.port}</p>
-        <h1>{project.title}</h1>
-        <span>{project.prompt}</span>
-      </section>
+      <header className="hero">
+        <p>潜水店 · 早晨气瓶充填排程</p>
+        <h1>充填工作台</h1>
+        <span>
+          前台收瓶 → 按氧氦比例自动排队 → 检验过期 / 残压异常留待处理区（不占充填位）→
+          完成登记实际氧氦、方式、操作员与签收人，单瓶履历逐次保留。数据保存在本机浏览器，重开后队列与履历对账一致。
+        </span>
+      </header>
 
       <section className="metrics">
-        {project.metrics.map((metric: string, index: number) => (
-          <article key={metric}>
-            <small>{metric}</small>
-            <strong>{[28, 6, 14, 91][index] ?? 10}</strong>
-          </article>
+        <article>
+          <small>待充填（在充填位）</small>
+          <strong>
+            {onStations}
+            <em>/{FILL_STATIONS}</em>
+          </strong>
+        </article>
+        <article>
+          <small>队列等位</small>
+          <strong>{Math.max(queued - FILL_STATIONS, 0)}</strong>
+        </article>
+        <article>
+          <small>待处理区（过期 {expiredCount}）</small>
+          <strong className={pendingCount ? "warn-num" : ""}>{pendingCount}</strong>
+        </article>
+        <article>
+          <small>队列平均目标 O₂</small>
+          <strong>{queued ? fmtPct(Math.round(avgO2 * 10) / 10) : "—"}</strong>
+        </article>
+      </section>
+
+      <nav className="tabs">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            className={tab === t.key ? "tab on" : "tab"}
+            onClick={() => setTab(t.key)}
+          >
+            {t.label}
+            {t.key === "pending" && pendingCount > 0 && <i className="badge">{pendingCount}</i>}
+          </button>
         ))}
-      </section>
+        <span className="tab-spacer" />
+        <button
+          className="tab-ghost"
+          onClick={() => {
+            if (confirm("载入演示数据？将覆盖当前全部数据。")) store.loadDemo(buildDemoState());
+          }}
+        >
+          载入演示数据
+        </button>
+        <button
+          className="tab-ghost danger"
+          onClick={() => {
+            if (confirm("确认清空全部收瓶、队列与履历数据？此操作不可恢复。")) store.reset();
+          }}
+        >
+          清空数据
+        </button>
+      </nav>
 
-      <section className="workspace">
-        <aside className="panel">
-          <h2>{project.domain}分类</h2>
-          <div className="chips">
-            {project.filters.map((item: string) => (
-              <button key={item}>{item}</button>
-            ))}
-          </div>
-        </aside>
+      {tab === "intake" && (
+        <IntakePage
+          initialForm={prefill}
+          onConsumed={() => setPrefill(null)}
+        />
+      )}
+      {tab === "queue" && <QueuePage intakes={state.intakes} />}
+      {tab === "pending" && <PendingPage intakes={state.intakes} onReedit={reedit} />}
+      {tab === "history" && <HistoryPage fills={state.fills} />}
 
-        <section className="panel form-panel">
-          <div className="heading">
-            <div>
-              <p>专业字段</p>
-              <h2>新增记录</h2>
-            </div>
-            <button className="primary">保存记录</button>
-          </div>
-          <div className="field-grid">
-            {project.fields.map((field: string) => (
-              <label key={field}>
-                <span>{field}</span>
-                <input placeholder={"填写" + field} />
-              </label>
-            ))}
-          </div>
-        </section>
-      </section>
-
-      <section className="panel">
-        <div className="heading">
-          <div>
-            <p>近期记录</p>
-            <h2>工作台摘要</h2>
-          </div>
-          <button>导出CSV</button>
-        </div>
-        <div className="records">
-          {project.records.map((record: string[], index: number) => (
-            <article key={record.join("-")}>
-              <b>{String(index + 1).padStart(2, "0")}</b>
-              <div>
-                <h3>{record[0]}</h3>
-                <p>{record.slice(1).join(" · ")}</p>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
+      <footer className="footnote">
+        规则（src/rules）、存档（src/archive）、页面（src/pages）三层分离；充填履历只增不改，
+        重开时以履历为准对账收瓶状态。最近保存：{state.savedAt ? new Date(state.savedAt).toLocaleString() : "—"}
+      </footer>
     </main>
   );
 }
