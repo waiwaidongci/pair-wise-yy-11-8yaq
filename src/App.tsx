@@ -1,126 +1,88 @@
+import { useState } from "react";
+import type { Cylinder } from "./domain/types";
+import { isToday, todayStr } from "./domain/rules";
+import { useFillStore } from "./store/useFillStore";
+import { IntakeForm } from "./components/IntakeForm";
+import { QueuePanel } from "./components/QueuePanel";
+import { HoldingPanel } from "./components/HoldingPanel";
+import { FillDialog } from "./components/FillDialog";
+import { ReceiptsPanel } from "./components/ReceiptsPanel";
+import { HistoryPanel } from "./components/HistoryPanel";
 import "./styles.css";
 
-const project = {
-  "sourceNo": 5,
-  "id": "hxyfront-62010",
-  "port": 62010,
-  "title": "潜水气瓶充填记录",
-  "domain": "潜水气瓶充填",
-  "prompt": "我想做一个给潜水店使用的气瓶充填前端系统，工作人员可以记录气瓶编号、容积、检验有效期、残压、目标压力、氧含量、氦含量、充填方式和操作员。页面需要有待充填队列、混合气比例提示、气瓶检验过期提醒、充填完成签收和单个气瓶历史记录。",
-  "palette": [
-    "#075985",
-    "#0d9488",
-    "#f59e0b"
-  ],
-  "metrics": [
-    "待充填",
-    "过期提醒",
-    "平均氧含量",
-    "签收单"
-  ],
-  "filters": [
-    "空气",
-    "高氧",
-    "Trimix",
-    "待检验"
-  ],
-  "fields": [
-    "气瓶编号",
-    "容积",
-    "检验有效期",
-    "残压",
-    "目标压力",
-    "氧含量"
-  ],
-  "records": [
-    [
-      "TANK-204",
-      "12L铝瓶",
-      "残压55bar，目标200bar",
-      "空气充填"
-    ],
-    [
-      "TANK-219",
-      "11L钢瓶",
-      "EAN32",
-      "待客户签收"
-    ],
-    [
-      "TANK-231",
-      "双瓶组",
-      "检验期剩余12天",
-      "标记提醒"
-    ]
-  ]
-};
-
 function App() {
+  const { state, queued, holding, intake, completeFill, updateHolding, removeCylinder, resetDemo } =
+    useFillStore();
+  const [filling, setFilling] = useState<Cylinder | null>(null);
+
+  const fillsToday = state.fills.filter((f) => isToday(f.filledAt));
+  const avgO2 = fillsToday.length
+    ? (fillsToday.reduce((s, f) => s + f.actualO2, 0) / fillsToday.length).toFixed(1) + "%"
+    : "—";
+  const activeSerials = state.cylinders.filter((c) => c.status !== "filled").map((c) => c.serial);
+
   return (
     <main className="app">
-      <section className="hero">
-        <p>{project.id} · 源提示词{project.sourceNo} · Port {project.port}</p>
-        <h1>{project.title}</h1>
-        <span>{project.prompt}</span>
-      </section>
+      <header className="hero">
+        <div className="hero-top">
+          <p>hxyfront-62010 · 潜水店早班充填台</p>
+          <button
+            className="ghost"
+            onClick={() => {
+              if (window.confirm("清除本地存档并恢复演示数据？")) resetDemo();
+            }}
+          >
+            重置演示数据
+          </button>
+        </div>
+        <h1>气瓶充填排班</h1>
+        <span>
+          {todayStr()} · 检验过期或残压高于目标的气瓶留在待处理区，不占充填位；队列按氧含量 → 氦含量 →
+          录入先后排序。数据保存在本机，重开页面后队列与履历自动恢复。
+        </span>
+      </header>
 
       <section className="metrics">
-        {project.metrics.map((metric: string, index: number) => (
-          <article key={metric}>
-            <small>{metric}</small>
-            <strong>{[28, 6, 14, 91][index] ?? 10}</strong>
-          </article>
-        ))}
+        <article>
+          <small>待充填</small>
+          <strong>{queued.length}</strong>
+        </article>
+        <article>
+          <small>待处理区</small>
+          <strong>{holding.length}</strong>
+        </article>
+        <article>
+          <small>今日已充填</small>
+          <strong>{fillsToday.length}</strong>
+        </article>
+        <article>
+          <small>今日平均氧含量</small>
+          <strong>{avgO2}</strong>
+        </article>
       </section>
 
       <section className="workspace">
-        <aside className="panel">
-          <h2>{project.domain}分类</h2>
-          <div className="chips">
-            {project.filters.map((item: string) => (
-              <button key={item}>{item}</button>
-            ))}
-          </div>
-        </aside>
-
-        <section className="panel form-panel">
-          <div className="heading">
-            <div>
-              <p>专业字段</p>
-              <h2>新增记录</h2>
-            </div>
-            <button className="primary">保存记录</button>
-          </div>
-          <div className="field-grid">
-            {project.fields.map((field: string) => (
-              <label key={field}>
-                <span>{field}</span>
-                <input placeholder={"填写" + field} />
-              </label>
-            ))}
-          </div>
-        </section>
+        <IntakeForm activeSerials={activeSerials} onIntake={intake} />
+        <QueuePanel queued={queued} onStartFill={setFilling} onRemove={removeCylinder} />
       </section>
 
-      <section className="panel">
-        <div className="heading">
-          <div>
-            <p>近期记录</p>
-            <h2>工作台摘要</h2>
-          </div>
-          <button>导出CSV</button>
-        </div>
-        <div className="records">
-          {project.records.map((record: string[], index: number) => (
-            <article key={record.join("-")}>
-              <b>{String(index + 1).padStart(2, "0")}</b>
-              <div>
-                <h3>{record[0]}</h3>
-                <p>{record.slice(1).join(" · ")}</p>
-              </div>
-            </article>
-          ))}
-        </div>
+      <HoldingPanel holding={holding} onUpdate={updateHolding} onRemove={removeCylinder} />
+
+      <section className="grid-2">
+        <ReceiptsPanel fills={fillsToday} />
+        <HistoryPanel cylinders={state.cylinders} fills={state.fills} />
       </section>
+
+      {filling && (
+        <FillDialog
+          cylinder={filling}
+          onCancel={() => setFilling(null)}
+          onConfirm={(input) => {
+            completeFill(filling, input);
+            setFilling(null);
+          }}
+        />
+      )}
     </main>
   );
 }
